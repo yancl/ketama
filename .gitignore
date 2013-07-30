@@ -1,6 +1,7 @@
 *.py[cod]
 
 # C extensions
+*.o
 *.so
 
 # Packages
@@ -24,6 +25,8 @@ nohup.out
 node_modules
 config.log
 config.status
+Makefile
+ketama_test
 
 #temp file
 *.swo
