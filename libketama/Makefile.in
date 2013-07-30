@@ -1,4 +1,4 @@
-MODULE_HASH=fnv_32a
+MODULE_HASH=@MODULE_HASH@
 PREFIX=/usr/local
 
 build:

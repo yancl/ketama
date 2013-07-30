@@ -27,7 +27,13 @@
 */
 
 #include "ketama.h"
+#include "ketama_config.h"
+
+#if defined(ENABLE_FNV_HASH)
+#include "fnv.h"
+#else
 #include "md5.h"
+#endif
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -42,6 +48,7 @@
 #include <syslog.h>
 #endif
 
+#define HASH_COUNT POINTS_PER_SERVER / POINTS_PER_HASH
 
 char k_error[255] = "";
 
@@ -180,6 +187,7 @@ ketama_sem_init( key_t key )
 }
 
 
+#if !defined(ENABLE_FNV_HASH)
 /* ketama.h does not expose this function */
 void
 ketama_md5_digest( char* inString, unsigned char md5pword[16] )
@@ -190,6 +198,7 @@ ketama_md5_digest( char* inString, unsigned char md5pword[16] )
     md5_append( &md5state, (unsigned char *)inString, strlen( inString ) );
     md5_finish( &md5state, md5pword );
 }
+#endif
 
 
 /** \brief Retrieve the modification time of a file.
@@ -326,15 +335,19 @@ read_server_definitions( char* filename, unsigned int* count, unsigned long* mem
 unsigned int
 ketama_hashi( char* inString )
 {
+#if defined(ENABLE_FNV_HASH)
+    return fnv_32a_str( inString, FNV1_32_INIT );
+#else
     unsigned char digest[16];
-
     ketama_md5_digest( inString, digest );
-    return (unsigned int)(( digest[3] << 24 )
-                        | ( digest[2] << 16 )
-                        | ( digest[1] <<  8 )
-                        |   digest[0] );
-}
+	unsigned int ret = ( digest[3] << 24 )
+			         | ( digest[2] << 16 )
+			         | ( digest[1] <<  8 )
+			         |   digest[0];
 
+	return ret;
+#endif
+}
 
 mcs*
 ketama_get_server( char* key, ketama_continuum cont )
@@ -349,7 +362,8 @@ ketama_get_server( char* key, ketama_continuum cont )
     // point after what this key hashes to
     while ( 1 )
     {
-        midp = (int)( ( lowp+highp ) / 2 );
+        //midp = (int)( ( lowp+highp ) / 2 );
+        midp = (lowp + highp) >> 1;
 
         if ( midp == cont->numpoints )
             return &( (*mcsarr)[0] ); // if at the end, roll back to zeroth
@@ -361,9 +375,11 @@ ketama_get_server( char* key, ketama_continuum cont )
             return &( (*mcsarr)[midp] );
 
         if ( midval < h )
-            lowp = midp + 1;
+            //lowp = midp + 1;
+            lowp = ++midp;
         else
-            highp = midp - 1;
+            //highp = midp - 1;
+            highp = --midp;
 
         if ( lowp > highp )
             return &( (*mcsarr)[0] );
@@ -411,13 +427,15 @@ ketama_create_continuum( key_t key, char* filename )
 #endif
 
     /* Continuum will hold one mcs for each point on the circle: */
-    mcs continuum[ numservers * 160 ];
+    //mcs continuum[ numservers * 160 ];
+    mcs continuum[ numservers * POINTS_PER_SERVER ];
     unsigned int i, k, cont = 0;
 
     for( i = 0; i < numservers; i++ )
     {
         float pct = (float)slist[i].memory / (float)memory;
-        unsigned int ks = floorf( pct * 40.0 * (float)numservers );
+        //unsigned int ks = floorf( pct * 40.0 * (float)numservers );
+        int ks = floorf( pct * HASH_COUNT * (float)numservers );
 #ifdef DEBUG
         int hpct = floorf( pct * 100.0 );
 
@@ -425,9 +443,18 @@ ketama_create_continuum( key_t key, char* filename )
             i, slist[i].addr, slist[i].memory, hpct, ks, numservers * 40 );
 #endif
 
+#if defined(ENABLE_FNV_HASH)
+        Fnv32_t hval = FNV1_32_INIT;
+#endif
         for( k = 0; k < ks; k++ )
         {
             /* 40 hashes, 4 numbers per hash = 160 points per server */
+#if defined(ENABLE_FNV_HASH)
+            hval = fnv_32a_str(slist[i].addr, hval);
+            continuum[cont].point = hval;
+            memcpy( continuum[cont].ip, slist[i].addr, 22 );
+            cont++;
+#else
             char ss[30];
             unsigned char digest[16];
 
@@ -437,7 +464,8 @@ ketama_create_continuum( key_t key, char* filename )
             /* Use successive 4-bytes from hash as numbers
              * for the points on the circle: */
             int h;
-            for( h = 0; h < 4; h++ )
+            //for( h = 0; h < 4; h++ )
+            for( h = 0; h < POINTS_PER_HASH; h++ )
             {
                 continuum[cont].point = ( digest[3+h*4] << 24 )
                                       | ( digest[2+h*4] << 16 )
@@ -447,6 +475,7 @@ ketama_create_continuum( key_t key, char* filename )
                 memcpy( continuum[cont].ip, slist[i].addr, 22 );
                 cont++;
             }
+#endif
         }
     }
     free( slist );
@@ -585,7 +614,7 @@ ketama_roll( ketama_continuum* contptr, char* filename )
     return 1;
 }
 
-
+//#if !defined(ENABLE_FNV_HASH)
 void
 ketama_smoke( ketama_continuum contptr )
 {
@@ -622,6 +651,7 @@ ketama_smoke( ketama_continuum contptr )
 
     free(contptr);
 }
+//#endif
 
 
 void
